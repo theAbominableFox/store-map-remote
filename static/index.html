@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mapa sklepów</title>
+<link rel="icon" href="marka/favicon">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+<aside>
+  <div class="head">
+    <div class="brand"><img src="marka/logo" alt="" id="brandLogo"><div><h1>Mapa sklepów</h1><div class="file" id="fileName"></div></div></div>
+    <div class="stats">
+      <div class="stat"><b id="sStores">0</b><span>sklepów</span></div>
+      <div class="stat"><b id="sIssues">0</b><span>otwarte usterki</span></div>
+      <div class="stat"><b id="sNew">0</b><span>nowe</span></div>
+      <div class="stat"><b id="sFr">0</b><span>franczyz</span></div>
+    </div>
+  </div>
+
+  <div class="tools">
+    <div class="actions">
+      <button class="btn ed" id="btnAddStore">+ Dodaj sklep</button>
+      <button class="btn danger ed" id="btnAddIncident">+ Usterka</button>
+      <button class="btn view-only" id="btnLogin" title="Zaloguj się, aby dodawać i zmieniać dane">🔒 Zaloguj do edycji</button>
+      <button class="btn sec" id="btnReload" title="Wczytaj ponownie z pliku">⟳</button>
+    </div>
+    <input id="search" type="search" placeholder="Szukaj sklepu, adresu, kierownika…">
+    <div class="chips" id="chipsReg"></div>
+    <div class="chips" id="chipsKind"></div>
+    <div class="chips" id="chipsOwn"></div>
+  </div>
+
+  <div id="missing" class="missing hidden"></div>
+  <div class="list" id="list"></div>
+
+  <div class="note">
+    <div class="note-row">
+      <button class="btn sec sm xlsx-only" id="btnXlsxDown" title="Pobierz aktualny plik z danymi">⬇ Pobierz Excel</button>
+      <button class="btn sec sm ed xlsx-only" id="btnXlsxUp" title="Zastąp dane na serwerze plikiem Excel">⬆ Wgraj Excel</button>
+      <button class="btn sec sm ed" id="btnRegions">Regiony</button>
+      <input type="file" id="fileXlsx" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+    </div>
+    <div class="note-row login-row ed"><span id="editorInfo">Tryb edycji</span>
+      <button class="btn sec sm" id="btnLogout">Wyloguj</button>
+    </div>
+    <div class="note-row"><span>Kolor menu:</span>
+      <select id="theme"><option value="auto">Auto (wg systemu)</option><option value="light">Jasny</option><option value="dark">Ciemny</option></select>
+    </div>
+  </div>
+</aside>
+
+<main>
+  <div id="map"></div>
+  <button class="tg" id="toggleMenu" title="Pokaż/ukryj menu">☰</button>
+  <div id="pickHint" class="hint hidden">Kliknij na mapie, aby ustawić pinezkę · <a href="#" id="pickCancel">anuluj</a></div>
+</main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<dialog id="dlg">
+  <form method="dialog" id="dlgForm">
+    <h2 id="dlgTitle"></h2>
+    <div id="dlgBody"></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn sec" id="dlgCancel">Anuluj</button>
+      <button type="submit" class="btn" id="dlgOk">Zapisz</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

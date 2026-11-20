@@ -1,0 +1,21 @@
+# Real store data and backups – never commit
+*.xlsx
+*.csv
+*.bak
+*.tmp
+dane/
+kopie/
+# …except the made-up example (tools/make_example.py)
+!przyklad/mapa_dane_przyklad.xlsx
+
+# Server settings (editor password)
+.env
+
+# Company branding (logo, favicon, name) – supplied only on the server, see README
+marka/
+
+# Machine/deployment notes for Claude Code (server address, local paths)
+CLAUDE.local.md
+
+__pycache__/
+*.pyc

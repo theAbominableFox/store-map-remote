@@ -1,0 +1,20 @@
+# Mapa sklepów – serwer w sieci lokalnej.
+# Ustawienia w pliku .env obok (skopiuj .env.example -> .env).
+# Dane: folder ./dane (mapa_dane.xlsx + kopie zapasowe w ./dane/kopie).
+services:
+  mapa:
+    build: .
+    image: mapa-sklepow
+    container_name: mapa-sklepow
+    restart: unless-stopped
+    # MAPA_ADRES = adres IP serwera w sieci lokalnej (np. 192.168.1.20), żeby mapa nasłuchiwała tylko na tej
+    # karcie sieciowej. Uwaga: porty Dockera omijają ufw, więc to jest właściwe miejsce na ograniczenie.
+    ports:
+      - "${MAPA_ADRES:-0.0.0.0}:${MAPA_PORT_HOSTA:-8000}:8000"
+    environment:
+      MAPA_HASLO: ${MAPA_HASLO:?Ustaw MAPA_HASLO w pliku .env}
+      MAPA_TYLKO_LAN: ${MAPA_TYLKO_LAN:-1}
+      MAPA_KOPIE: ${MAPA_KOPIE:-30}
+      TZ: Europe/Warsaw
+    volumes:
+      - ./dane:/data

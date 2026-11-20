@@ -1,0 +1,10 @@
+* text=auto
+# run on Linux (server / Docker) – must stay LF
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+.env.example text eol=lf
+# cmd breaks on LF batch files
+*.bat text eol=crlf
+*.png binary
+*.xlsx binary

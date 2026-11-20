@@ -1,0 +1,14 @@
+*.xlsx
+*.csv
+*.bak
+*.tmp
+*.upload-tmp.xlsx
+dane/
+kopie/
+.env
+marka/
+przyklad/
+CLAUDE*.md
+*.bat
+tools/
+__pycache__/

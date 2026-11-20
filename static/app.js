@@ -1,0 +1,578 @@
+/* Mapa sklepów – front-end.
+   Dane pochodzą z serwera (server.py), który czyta/zapisuje plik xlsx/csv.
+   Sklep = wiersz arkusza (kolumny listy sklepów + Status/Lat/Lng/ID).
+   Usterka = wiersz arkusza "Incydenty", zawsze przypisana do istniejącego sklepu (kolumna POS). */
+
+const PRIORITIES = ["niski", "średni", "wysoki"];
+const PRIO_COLOR = { niski: "#3b82f6", "średni": "#f59e0b", wysoki: "#dc2626" };
+const STATUSES = ["nowa", "w trakcie", "naprawiona"];
+const STATUS_LABEL = { nowa: "Nowa", "w trakcie": "W trakcie", naprawiona: "Naprawiona" };
+const DONE = "naprawiona";
+const APP_COLS = ["Status", "Lat", "Lng", "ID"];
+const EXTRA_COLORS = ["#0891b2", "#db2777", "#65a30d", "#7c3aed", "#ea580c", "#0d9488"];
+const NO_REGION = "#4a4a47"; // ciemnoszary (jak tło ciemnego motywu Claude)
+
+let D = { columns: [], stores: [], incidents: [], regions: [] };
+let COL = {};                       // name, address, region, type
+let mtime = 0;
+let EDITOR = false;                 // zalogowany do edycji (albo serwer bez hasła)
+let LOGIN = false;                  // serwer wymaga hasła do edycji
+const F ={ reg: new Set(), kind: "all", own: "all", q: "" };   // filtry
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clsOf = (s) => s.replace(/\s+/g, "");
+
+// ------------------------------------------------------------------ mapa
+const map = L.map("map", { zoomControl: true }).setView([52.0, 19.4], 6);
+// Style mapy (wybór w lewym dolnym rogu). "filter" przyciemnia kafelki OSM w CSS (klasy .ms-* w style.css).
+const OSM_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const OSM_ATTR = "&copy; OpenStreetMap contributors";
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/";
+const MAP_STYLES = {
+  standard: { label: "Standardowa", layers: [[OSM_URL, OSM_ATTR]] },
+  muted: { label: "Przygaszona", layers: [[OSM_URL, OSM_ATTR]] },
+  dark: { label: "Ciemna", layers: [[OSM_URL, OSM_ATTR]] },
+  darkgray: { label: "Ciemnoszara", layers: [
+    [ESRI + "World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", "Tiles &copy; Esri"],
+    [ESRI + "World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", ""],   // nazwy miast
+  ] },
+};
+let baseLayers = [];
+let currentStyle = "standard";
+
+// Granice kraju i województw (static/granice.geojson) – czerwone na jasnych mapach, białe na ciemnych.
+const DARK_STYLES = ["dark", "darkgray"];
+map.createPane("borders");
+map.getPane("borders").style.zIndex = 350;          // nad kafelkami, pod pinezkami
+map.getPane("borders").style.pointerEvents = "none";
+let borders = null;
+function borderStyle(f) {
+  const color = DARK_STYLES.includes(currentStyle) ? "#ffffff" : "#d62828";
+  return f.properties.kind === "kraj"
+    ? { color, weight: 3.5, opacity: 0.9 }
+    : { color, weight: 2, opacity: 0.75, dashArray: "7 5" };
+}
+fetch("granice.geojson").then((r) => r.json()).then((gj) => {
+  borders = L.geoJSON(gj, { pane: "borders", style: borderStyle, interactive: false }).addTo(map);
+}).catch(() => {});
+
+function setMapStyle(key) {
+  if (!MAP_STYLES[key]) key = "standard";
+  currentStyle = key;
+  if (borders) borders.setStyle(borderStyle);
+  baseLayers.forEach((l) => map.removeLayer(l));
+  baseLayers = MAP_STYLES[key].layers.map(([url, attribution]) =>
+    L.tileLayer(url, { maxZoom: 19, maxNativeZoom: url.includes("arcgis") ? 16 : 19, attribution }).addTo(map));
+  baseLayers.forEach((l) => l.bringToBack());
+  const el = document.getElementById("map");
+  Object.keys(MAP_STYLES).forEach((k) => el.classList.toggle("ms-" + k, k === key));
+  try { localStorage.setItem("styl-mapy", key); } catch {}
+  document.querySelectorAll(".style-pick [data-style]").forEach((b) => b.classList.toggle("on", b.dataset.style === key));
+  const cur = document.querySelector(".style-pick .cur");
+  if (cur) cur.textContent = MAP_STYLES[key].label;
+}
+let savedStyle = "standard";
+try { savedStyle = localStorage.getItem("styl-mapy") || "standard"; } catch {}
+const stylePicker = L.control({ position: "bottomleft" });
+stylePicker.onAdd = () => {
+  const d = L.DomUtil.create("div", "style-pick");
+  d.innerHTML = `<div class="menu hidden">${Object.entries(MAP_STYLES).map(([k, s]) =>
+      `<button type="button" data-style="${k}"><span class="sw sw-${k}"></span>${s.label}</button>`).join("")}</div>
+    <button type="button" class="toggle" title="Styl mapy">🗺 Mapa: <b class="cur"></b></button>`;
+  L.DomEvent.disableClickPropagation(d);
+  L.DomEvent.disableScrollPropagation(d);
+  const menu = d.querySelector(".menu");
+  d.querySelector(".toggle").onclick = () => menu.classList.toggle("hidden");
+  d.querySelectorAll("[data-style]").forEach((b) => (b.onclick = () => { setMapStyle(b.dataset.style); menu.classList.add("hidden"); }));
+  return d;
+};
+stylePicker.addTo(map);
+setMapStyle(savedStyle);
+map.on("click", () => document.querySelector(".style-pick .menu")?.classList.add("hidden"));
+const layer = L.layerGroup().addTo(map);
+const markers = {}; // id sklepu -> marker
+map.on("zoomend", () => $("#map").classList.toggle("z", map.getZoom() >= 9));
+
+// ------------------------------------------------------------------ API
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json; charset=utf-8" }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.login && EDITOR) { setEditor(false); render(); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (j.mtime) mtime = j.mtime;
+  return j;
+}
+function setEditor(on) {
+  EDITOR = !!on;
+  document.body.classList.toggle("editor", EDITOR);
+  document.body.classList.toggle("has-login", LOGIN);
+  document.body.classList.toggle("xlsx", D.kind === "xlsx");
+}
+function toast(msg, err) {
+  const t = $("#toast");
+  t.textContent = msg; t.className = "toast" + (err ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add("hidden"), err ? 6000 : 2500);
+}
+
+async function load(keepView) {
+  D = await api("GET", "/api/data");
+  mtime = D.mtime;
+  const c = D.columns;
+  const find = (re) => c.find((x) => re.test(x));
+  COL = { name: c[0], address: find(/adres/i), region: find(/region/i), type: find(/rodzaj|typ/i) };
+  $("#fileName").textContent = "Dane: " + D.file;
+  // nazwa firmy z pliku marka/nazwa.txt na serwerze (opcjonalna)
+  document.title = "Mapa sklepów" + (D.brand ? " | " + D.brand : "");
+  $("#brandLogo").alt = D.brand || "";
+  LOGIN = !!D.login;
+  setEditor(D.editor);
+  for (const r of [...F.reg]) if (r !== "∅" && !regionNames().includes(r)) F.reg.delete(r);
+  render();
+  renderLegend();
+  if (!keepView) fitAll();
+}
+
+// ------------------------------------------------------------------ sklepy / usterki – pomocnicze
+const nameOf = (s) => s[COL.name] || "";
+const regionOf = (s) => { const r = (s[COL.region] || "").trim(); return r === "-" ? "" : r; };
+const isPending = (s) => (s.Status || "").toLowerCase() === "pending";
+const isFranchise = (s) => (s[COL.type] || "").trim().toLowerCase() === "franczyza";
+// lokalizacja, która nie jest sklepem (region typu "inne") – nie liczy się do statystyk sklepów
+const isOther = (s) => { const r = regionOf(s); return !!r && D.regions.some((x) => x.Region === r && x.Typ === "inne"); };
+const isStore = (s) => !isOther(s);
+const hasGeo = (s) => s.Lat !== "" && s.Lng !== "" && !isNaN(+s.Lat) && !isNaN(+s.Lng);
+const isOpen = (i) => i.Status !== DONE;
+const incFor = (s) => D.incidents.filter((i) => i.POS === nameOf(s));
+const openIncFor = (s) => incFor(s).filter(isOpen);
+const prioRank = (p) => Math.max(0, PRIORITIES.indexOf(p));
+const topPriority = (incs) => incs.reduce((b, i) => (prioRank(i.Priorytet) > prioRank(b) ? i.Priorytet : b), PRIORITIES[0]);
+const storeById = (id) => D.stores.find((s) => s.ID === id);
+
+function regionColor(r) {
+  if (!r) return NO_REGION;
+  const conf = D.regions.find((x) => x.Region === r);
+  if (conf && conf.Kolor) return conf.Kolor;
+  let h = 0; for (const ch of r) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return EXTRA_COLORS[h % EXTRA_COLORS.length];
+}
+// regiony z konfiguracji + te, które występują w danych
+function regionNames() {
+  const names = D.regions.map((r) => r.Region);
+  for (const s of D.stores) { const r = regionOf(s); if (r && !names.includes(r)) names.push(r); }
+  return names;
+}
+
+// ------------------------------------------------------------------ pinezki
+function pinHtml(s, incs, mini) {
+  const cls = ["pin", isFranchise(s) ? "fr" : "", isPending(s) ? "op" : "", mini ? "mini" : ""].join(" ");
+  const badge = incs && incs.length
+    ? `<div class="inc-badge" style="background:${PRIO_COLOR[topPriority(incs)]}"><span>!</span>${incs.length > 1 ? `<b>${incs.length}</b>` : ""}</div>` : "";
+  return `<div class="${cls}" style="--c:${regionColor(regionOf(s))}"><i></i>${badge}${mini ? "" : `<em>${esc(nameOf(s))}</em>`}</div>`;
+}
+const storeIcon = (s, incs) => L.divIcon({ className: "", html: pinHtml(s, incs), iconSize: [22.5, 22.5], iconAnchor: [11.25, 11.25], popupAnchor: [0, -10] });
+
+// ------------------------------------------------------------------ filtry
+function visible(s) {
+  if (F.reg.size && !F.reg.has(regionOf(s) || "∅")) return false;
+  if (F.kind === "iss" && !openIncFor(s).length) return false;
+  if (F.kind === "open" && !isPending(s)) return false;
+  if (F.own === "own" && isFranchise(s)) return false;
+  if (F.own === "fr" && !isFranchise(s)) return false;
+  if (F.q) {
+    const hay = (Object.values(s).join(" ") + " " + incFor(s).map((i) => i.Komentarz).join(" ")).toLowerCase();
+    if (!hay.includes(F.q)) return false;
+  }
+  return true;
+}
+
+function renderChips() {
+  const names = regionNames();
+  const count = (r) => D.stores.filter((s) => (regionOf(s) || "∅") === r).length;
+  const noReg = count("∅");
+  $("#chipsReg").innerHTML = `<span class="chip ${F.reg.size ? "" : "on"}" data-r="">Wszystkie</span>` +
+    names.map((r) => `<span class="chip ${F.reg.has(r) ? "on" : ""}" data-r="${esc(r)}"><i style="background:${regionColor(r)}"></i>${esc(r)} <b>${count(r)}</b></span>`).join("") +
+    (noReg ? `<span class="chip ${F.reg.has("∅") ? "on" : ""}" data-r="∅"><i style="background:${NO_REGION}"></i>Bez regionu <b>${noReg}</b></span>` : "");
+  $("#chipsKind").innerHTML = [["all", "Wszystkie"], ["iss", "Z usterkami"], ["open", "Nowe otwarcia"]]
+    .map(([k, l]) => `<span class="chip ${F.kind === k ? "on" : ""}" data-k="${k}">${l}</span>`).join("");
+  $("#chipsOwn").innerHTML = [["all", "Wszystkie typy"], ["own", "Własne"], ["fr", "Franczyzy"]]
+    .map(([k, l]) => `<span class="chip ${F.own === k ? "on" : ""}" data-o="${k}">${l}</span>`).join("");
+  document.querySelectorAll("#chipsReg .chip").forEach((c) => (c.onclick = () => {
+    const r = c.dataset.r;
+    if (!r) F.reg.clear(); else F.reg.has(r) ? F.reg.delete(r) : F.reg.add(r);
+    render();
+  }));
+  document.querySelectorAll("#chipsKind .chip").forEach((c) => (c.onclick = () => { F.kind = c.dataset.k; render(); }));
+  document.querySelectorAll("#chipsOwn .chip").forEach((c) => (c.onclick = () => { F.own = c.dataset.o; render(); }));
+}
+
+// ------------------------------------------------------------------ rysowanie
+function render() {
+  const openPopupId = Object.keys(markers).find((id) => markers[id].isPopupOpen());
+  layer.clearLayers();
+  for (const k in markers) delete markers[k];
+  const vs = D.stores.filter(visible);
+  for (const s of vs) if (hasGeo(s)) {
+    const incs = openIncFor(s);
+    const m = L.marker([+s.Lat, +s.Lng], { icon: storeIcon(s, incs), zIndexOffset: incs.length ? 500 + prioRank(topPriority(incs)) * 100 : 0,
+      riseOnHover: true, riseOffset: 10000 })   // pinezka pod kursorem wychodzi na wierzch
+      .bindPopup(() => storePopup(s), { maxWidth: 380 }).addTo(layer);
+    const tip = incs.length ? ` – usterki: ${incs.length} (${topPriority(incs)})` : "";
+    m.bindTooltip(esc(nameOf(s) + tip), { direction: "top", offset: [0, -10] });
+    markers[s.ID] = m;
+  }
+  if (openPopupId && markers[openPopupId]) markers[openPopupId].openPopup();
+  // statystyki
+  $("#sStores").textContent = D.stores.filter(isStore).length;
+  $("#sIssues").textContent = D.incidents.filter(isOpen).length;
+  $("#sNew").textContent = D.stores.filter((s) => isStore(s) && isPending(s)).length;
+  $("#sFr").textContent = D.stores.filter((s) => isStore(s) && isFranchise(s)).length;
+  renderChips();
+  renderList(vs);
+}
+
+function renderList(vs) {
+  const miss = D.stores.filter((s) => !hasGeo(s));
+  const mb = $("#missing");
+  mb.classList.toggle("hidden", !miss.length);
+  mb.innerHTML = `<span>Bez lokalizacji: ${miss.length}</span><button class="btn sec sm ed" id="btnGeoAll">Geokoduj brakujące</button>`;
+  $("#btnGeoAll").onclick = geocodeMissing;
+  vs = [...vs].sort((a, b) => nameOf(a).localeCompare(nameOf(b), "pl"));
+  $("#list").innerHTML = vs.map((s) => {
+    const incs = openIncFor(s);
+    return `<div class="item ${hasGeo(s) ? "" : "nogeo"}" data-id="${s.ID}">${pinHtml(s, null, true)}
+      <div class="t"><b>${esc(nameOf(s))}</b><span>${esc(s[COL.address] || "")}</span></div>
+      ${isOther(s) ? '<span class="tag">nie sklep</span>' : ""}${isPending(s) ? '<span class="tag">nowe</span>' : ""}${isFranchise(s) ? '<span class="tag">fr.</span>' : ""}
+      ${incs.length ? `<span class="badge" style="background:${PRIO_COLOR[topPriority(incs)]}">${incs.length}</span>` : ""}</div>`;
+  }).join("") || `<p class="mut" style="padding:12px">Brak wyników.</p>`;
+  document.querySelectorAll("#list .item").forEach((el) => (el.onclick = () => focusOn(el.dataset.id)));
+}
+
+function focusOn(id) {
+  const m = markers[id];
+  if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 12)); m.openPopup(); return; }
+  const s = storeById(id);
+  if (s && !hasGeo(s)) EDITOR ? editStore(s) : toast("Ten sklep nie ma jeszcze lokalizacji na mapie.");
+}
+function fitAll() {
+  const pts = D.stores.filter((s) => hasGeo(s)).map((s) => [+s.Lat, +s.Lng]);
+  map.invalidateSize();
+  if (pts.length) map.fitBounds(pts, { padding: [30, 30] });
+}
+
+// ------------------------------------------------------------------ legenda
+// Legenda da się zwinąć do przycisku „Legenda” (na telefonie domyślnie zwinięta). Wybór pamięta przeglądarka.
+const legend = L.control({ position: "bottomright" });
+legend.onAdd = () => {
+  const d = L.DomUtil.create("div", "legend");
+  d.innerHTML = `<button type="button" class="lg-toggle" aria-expanded="true"><span>Legenda</span><b class="lg-arrow">▾</b></button><div class="lg-body"></div>`;
+  L.DomEvent.disableClickPropagation(d);
+  L.DomEvent.disableScrollPropagation(d);
+  d.querySelector(".lg-toggle").onclick = () => setLegendCollapsed(!d.classList.contains("collapsed"), true);
+  return d;
+};
+legend.addTo(map);
+function setLegendCollapsed(on, remember) {
+  const d = legend.getContainer();
+  d.classList.toggle("collapsed", on);
+  d.querySelector(".lg-toggle").setAttribute("aria-expanded", String(!on));
+  d.querySelector(".lg-toggle").title = on ? "Pokaż legendę" : "Ukryj legendę";
+  if (remember) { try { localStorage.setItem("legenda-ukryta", on ? "1" : "0"); } catch {} }
+}
+{
+  let saved = null;
+  try { saved = localStorage.getItem("legenda-ukryta"); } catch {}
+  setLegendCollapsed(saved === null ? window.matchMedia("(max-width: 760px)").matches : saved === "1", false);
+}
+function renderLegend() {
+  const demo = (type, status) => pinHtml({ [COL.type]: type, Status: status, [COL.region]: "" }, null, false).replace(/<em>.*<\/em>/, "");
+  const row = (sym, label) => `<div class="row"><span class="sym">${sym}</span>${label}</div>`;
+  legend.getContainer().querySelector(".lg-body").innerHTML =
+    regionNames().map((r) => row(`<i style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${regionColor(r)}"></i>`, esc(r))).join("") +
+    "<hr>" + row(demo("własny", "aktywny"), "własny") + row(demo("franczyza", "aktywny"), "franczyza") + row(demo("własny", "pending"), "nowe otwarcie") +
+    "<hr>" + PRIORITIES.map((p) => row(`<div class="inc-badge" style="background:${PRIO_COLOR[p]}"><span>!</span></div>`, "usterka – " + p)).join("") +
+    `<div class="mut ed" style="margin-top:4px">Prawy klik na mapie: dodaj sklep</div>`;
+}
+
+// ------------------------------------------------------------------ popup sklepu
+function issueHtml(i) {
+  return `<div class="iss ${isOpen(i) ? "" : "done"}" data-inc="${i.ID}" style="--pc:${isOpen(i) ? PRIO_COLOR[i.Priorytet] : "var(--bd)"}">
+    <div class="t"><span>${esc(i.Komentarz) || "<i>bez opisu</i>"}</span>
+      <div class="m">priorytet: ${esc(i.Priorytet)} · ${esc(i["Data zgłoszenia"])}${i["Data zamknięcia"] ? " → " + esc(i["Data zamknięcia"]) : ""}</div></div>
+    <button class="st ${clsOf(i.Status)}" data-a="cycle" ${EDITOR ? 'title="Kliknij, aby zmienić status"' : "disabled"}>${STATUS_LABEL[i.Status] || esc(i.Status)}</button>
+    <button class="st ed" data-a="iedit" title="Edytuj">✎</button>
+    <button class="st x ed" data-a="idel" title="Usuń">×</button></div>`;
+}
+function storePopup(s) {
+  const el = document.createElement("div");
+  el.className = "pop";
+  const rows = D.columns.filter((c) => c !== COL.name && c !== COL.region && c !== COL.type && !APP_COLS.includes(c) && s[c] && s[c] !== "-")
+    .map((c) => `<tr><td>${esc(c)}</td><td>${esc(s[c])}</td></tr>`).join("");
+  const incs = incFor(s).sort((a, b) => isOpen(b) - isOpen(a) || prioRank(b.Priorytet) - prioRank(a.Priorytet));
+  const r = regionOf(s);
+  el.innerHTML = `<h3>${esc(nameOf(s))}</h3>
+    <div class="tags"><span class="tag"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${regionColor(r)}"></i> ${esc(r || "bez regionu")}</span>
+    ${isPending(s) ? '<span class="tag">nowe otwarcie</span>' : ""}${isOther(s) ? '<span class="tag">lokalizacja (nie sklep)</span>' : `<span class="tag">${isFranchise(s) ? "franczyza" : esc(s[COL.type] || "własny")}</span>`}</div>
+    <table>${rows}</table>
+    <h4>Usterki</h4>${incs.map(issueHtml).join("") || '<div class="mut">Brak usterek.</div>'}
+    <div class="btns ed">
+      <button class="btn danger sm" data-a="inc">+ Usterka</button>
+      <button class="btn sec sm" data-a="toggle">${isPending(s) ? "✓ Otwarty (aktywny)" : "Oznacz: nowe otwarcie"}</button>
+      <button class="btn sec sm" data-a="edit">Edytuj</button>
+      <button class="btn sec sm" data-a="move">Przesuń</button>
+      <button class="btn sec sm" data-a="del" style="color:var(--danger)">Usuń</button>
+    </div>`;
+  el.querySelectorAll("[data-inc]").forEach((box) => {
+    const i = D.incidents.find((x) => x.ID === box.dataset.inc);
+    box.querySelector('[data-a="cycle"]').onclick = () =>
+      saveIncident(i.ID, { Status: STATUSES[(STATUSES.indexOf(i.Status) + 1) % STATUSES.length] }, true);
+    box.querySelector('[data-a="iedit"]').onclick = () => { map.closePopup(); editIncident(i); };
+    box.querySelector('[data-a="idel"]').onclick = () => {
+      if (confirm("Usunąć tę usterkę na stałe?\n(Aby zachować historię, ustaw status „Naprawiona”.)"))
+        run(() => api("DELETE", "/api/incidents/" + i.ID), "Usterka usunięta", true);
+    };
+  });
+  el.querySelector('[data-a="inc"]').onclick = () => { map.closePopup(); editIncident(null, s); };
+  el.querySelector('[data-a="toggle"]').onclick = () => saveStore(s.ID, { Status: isPending(s) ? "aktywny" : "pending" });
+  el.querySelector('[data-a="edit"]').onclick = () => { map.closePopup(); editStore(s); };
+  el.querySelector('[data-a="move"]').onclick = () => { map.closePopup(); pick((ll) => ll && saveStore(s.ID, { Lat: ll.lat.toFixed(7), Lng: ll.lng.toFixed(7) })); };
+  el.querySelector('[data-a="del"]').onclick = () => {
+    const n = incFor(s).length;
+    if (confirm(`Usunąć sklep „${nameOf(s)}” z pliku ${D.file}?` + (n ? `\nZostanie też usuniętych ${n} usterek tego sklepu.` : "")))
+      run(() => api("DELETE", "/api/stores/" + s.ID), "Sklep usunięty");
+  };
+  return el;
+}
+
+// ------------------------------------------------------------------ zapis
+async function run(fn, msg, keepPopup) {
+  try {
+    await fn();
+    if (!keepPopup) map.closePopup();
+    await load(true);
+    if (msg) toast(msg);
+  } catch (e) { toast(e.message, true); }
+}
+const saveStore = (id, data) => run(() => api(id ? "PUT" : "POST", "/api/stores" + (id ? "/" + id : ""), data), "Zapisano w " + D.file);
+const saveIncident = (id, data, keepPopup) => run(() => api(id ? "PUT" : "POST", "/api/incidents" + (id ? "/" + id : ""), data), "Zapisano w " + D.file, keepPopup);
+
+// ------------------------------------------------------------------ wskazywanie na mapie
+let pickCb = null;
+function pick(cb) { pickCb = cb; $("#pickHint").classList.remove("hidden"); $("#map").classList.add("picking"); }
+function endPick() { pickCb = null; $("#pickHint").classList.add("hidden"); $("#map").classList.remove("picking"); }
+map.on("click", (e) => { if (pickCb) { const cb = pickCb; endPick(); cb(e.latlng); } });
+$("#pickCancel").onclick = (e) => { e.preventDefault(); const cb = pickCb; endPick(); cb && cb(null); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && pickCb) $("#pickCancel").click(); });
+
+// ------------------------------------------------------------------ okna dialogowe
+function dialog(title, html, onOk, okLabel = "Zapisz") {
+  $("#dlgTitle").textContent = title;
+  $("#dlgBody").innerHTML = html;
+  $("#dlgOk").textContent = okLabel;
+  const dlg = $("#dlg");
+  $("#dlgCancel").onclick = () => dlg.close();
+  $("#dlgForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const ok = await onOk(new FormData($("#dlgForm")));
+    if (ok !== false) dlg.close();
+  };
+  dlg.showModal();
+  return dlg;
+}
+const options = (vals, cur, labels = {}) => vals.map((v) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(labels[v] ?? v)}</option>`).join("");
+
+function pickInto(dlg) {
+  dlg.close();
+  pick((ll) => {
+    dlg.showModal();
+    if (ll) { dlg.querySelector('[name="Lat"]').value = ll.lat.toFixed(7); dlg.querySelector('[name="Lng"]').value = ll.lng.toFixed(7); }
+  });
+}
+
+function editStore(s, latlng) {
+  const isNew = !s;
+  s = s || { Status: "aktywny", Lat: latlng ? latlng.lat.toFixed(7) : "", Lng: latlng ? latlng.lng.toFixed(7) : "" };
+  const types = [...new Set(["własny", "franczyza", ...D.stores.map((x) => (x[COL.type] || "").trim().toLowerCase()).filter(Boolean)])];
+  const fields = D.columns.filter((c) => !APP_COLS.includes(c)).map((c) => {
+    const v = s[c] || "";
+    if (c === COL.address)
+      return `<div class="frow full"><label>${esc(c)}<input name="${esc(c)}" value="${esc(v)}"></label><button type="button" class="btn sec" id="btnGeo">Znajdź na mapie</button></div>`;
+    if (c === COL.region)
+      return `<label>${esc(c)}<select name="${esc(c)}"><option value="">— bez regionu —</option>${options([...new Set([...regionNames(), regionOf(s)].filter(Boolean))], regionOf(s))}</select></label>`;
+    if (c === COL.type)
+      return `<label>${esc(c)}<select name="${esc(c)}"><option value=""></option>${options(types, (v || "").toLowerCase())}</select></label>`;
+    const full = c === COL.name ? " full" : "";
+    return `<label class="${full}">${esc(c)}<input type="${/^data/i.test(c) ? "date" : "text"}" name="${esc(c)}" value="${esc(v)}" ${c === COL.name ? "required" : ""}></label>`;
+  }).join("");
+  const html = `${fields}
+    <label>Status<select name="Status">${options(["aktywny", "pending"], isPending(s) ? "pending" : "aktywny", { aktywny: "aktywny", pending: "nowe otwarcie" })}</select></label><div></div>
+    <div class="frow full"><label>Szerokość (lat)<input name="Lat" value="${esc(s.Lat)}"></label><label>Długość (lng)<input name="Lng" value="${esc(s.Lng)}"></label>
+      <button type="button" class="btn sec" id="btnPick">Wskaż na mapie</button></div>
+    <div class="geo-info full" id="geoInfo"></div>`;
+  const dlg = dialog(isNew ? "Nowy sklep" : "Edytuj: " + nameOf(s), html, async (fd) => {
+    const data = Object.fromEntries(fd.entries());
+    let res;
+    try { res = await api(isNew ? "POST" : "PUT", "/api/stores" + (isNew ? "" : "/" + s.ID), data); }
+    catch (e) { toast(e.message, true); return false; }
+    await load(true); toast("Zapisano w " + D.file);
+    setTimeout(() => focusOn(res.record.ID), 50);
+  });
+  dlg.querySelector("#btnGeo").onclick = async () => {
+    const q = dlg.querySelector(`[name="${CSS.escape(COL.address)}"]`).value;
+    if (!q) return;
+    $("#geoInfo").textContent = "Szukam…";
+    try {
+      const r = await api("GET", "/api/geocode?q=" + encodeURIComponent(q));
+      dlg.querySelector('[name="Lat"]').value = r.lat.toFixed(7);
+      dlg.querySelector('[name="Lng"]').value = r.lng.toFixed(7);
+      $("#geoInfo").textContent = "Znaleziono: " + r.label;
+    } catch (e) { $("#geoInfo").textContent = e.message + " – użyj „Wskaż na mapie”."; }
+  };
+  dlg.querySelector("#btnPick").onclick = () => pickInto(dlg);
+}
+
+function editIncident(i, store) {
+  const isNew = !i;
+  i = i || { POS: store ? nameOf(store) : "", Priorytet: "średni", Status: "nowa", Komentarz: "" };
+  const names = D.stores.map(nameOf).filter(Boolean).sort((a, b) => a.localeCompare(b, "pl"));
+  const html = `
+    <label class="full">Sklep<select name="POS" required><option value="">— wybierz sklep —</option>${options(names, i.POS)}</select></label>
+    <div class="full"><label>Priorytet</label><div class="prio">${PRIORITIES.map((p) =>
+      `<label style="--pc:${PRIO_COLOR[p]}"><input type="radio" name="Priorytet" value="${p}" ${i.Priorytet === p ? "checked" : ""}>${p}</label>`).join("")}</div></div>
+    <label class="full">Opis usterki<textarea name="Komentarz" placeholder="Co nie działa, co trzeba zrobić…">${esc(i.Komentarz)}</textarea></label>
+    <label>Status<select name="Status">${options(STATUSES, i.Status, STATUS_LABEL)}</select></label>`;
+  dialog(isNew ? "Nowa usterka" : "Edytuj usterkę", html, async (fd) => {
+    const data = Object.fromEntries(fd.entries());
+    try { await api(isNew ? "POST" : "PUT", "/api/incidents" + (isNew ? "" : "/" + i.ID), data); }
+    catch (e) { toast(e.message, true); return false; }
+    await load(true); toast("Usterka zapisana w " + D.file);
+    const s = D.stores.find((x) => nameOf(x) === data.POS);
+    if (s) setTimeout(() => focusOn(s.ID), 50);
+  });
+}
+
+function editRegions() {
+  const counts = (r) => D.stores.filter((s) => regionOf(s) === r).length;
+  const typeOf = (r) => (D.regions.find((x) => x.Region === r) || {}).Typ || "sklepy";
+  const otherBox = (on) => `<label class="oth" title="Lokalizacje, które nie są sklepami – nie liczą się do statystyk"><input type="checkbox" class="ro" ${on ? "checked" : ""}> nie sklepy</label>`;
+  const rows = (list) => list.map((r) => `<div class="reg-row full" data-old="${esc(r)}">
+      <input type="color" value="${regionColor(r)}"><input class="rn" value="${esc(r)}">${otherBox(typeOf(r) === "inne")}<span class="cnt">${counts(r)} lok.</span></div>`).join("");
+  const dlg = dialog("Regiony – nazwy i kolory",
+    `<p class="mut full" style="margin:0;font-size:12px">Zmiana nazwy zmienia też kolumnę „${esc(COL.region || "Region")}” we wszystkich sklepach tego regionu. „Nie sklepy” = lokalizacje (np. magazyny), które nie liczą się do statystyk sklepów.</p>
+     <div class="full" id="regRows" style="display:flex;flex-direction:column;gap:8px">${rows(regionNames())}</div>
+     <div class="full"><button type="button" class="btn sec sm" id="regAdd">+ Dodaj region</button></div>`,
+    async () => {
+      const items = [...dlg.querySelectorAll(".reg-row")].map((row) => ({
+        old: row.dataset.old, name: row.querySelector(".rn").value.trim(), color: row.querySelector("input[type=color]").value,
+        type: row.querySelector(".ro").checked ? "inne" : "sklepy",
+      })).filter((x) => x.name);
+      const names = items.map((x) => x.name);
+      if (new Set(names).size !== names.length) { toast("Nazwy regionów muszą być unikalne", true); return false; }
+      try { await api("PUT", "/api/regions", { regions: items }); } catch (e) { toast(e.message, true); return false; }
+      await load(true); toast("Regiony zapisane");
+    });
+  dlg.querySelector("#regAdd").onclick = () => {
+    dlg.querySelector("#regRows").insertAdjacentHTML("beforeend",
+      `<div class="reg-row full" data-old=""><input type="color" value="${EXTRA_COLORS[0]}"><input class="rn" placeholder="Nazwa regionu">${otherBox(false)}<span class="cnt">nowy</span></div>`);
+  };
+}
+
+// ------------------------------------------------------------------ geokodowanie brakujących
+async function geocodeMissing() {
+  const miss = D.stores.filter((s) => !hasGeo(s) && s[COL.address]);
+  const noAddr = D.stores.filter((s) => !hasGeo(s) && !s[COL.address]).length;
+  if (!miss.length) return toast(`Brak adresów do sprawdzenia${noAddr ? ` (${noAddr} bez adresu – edytuj i użyj „Wskaż na mapie”)` : ""}`, true);
+  if (!confirm(`Wyszukać ${miss.length} adres(ów) w OpenStreetMap? (~1 s każdy)`)) return;
+  let ok = 0;
+  for (const [n, s] of miss.entries()) {
+    toast(`Geokodowanie ${n + 1}/${miss.length}: ${nameOf(s)}`);
+    try {
+      const r = await api("GET", "/api/geocode?q=" + encodeURIComponent(s[COL.address]));
+      await api("PUT", "/api/stores/" + s.ID, { Lat: r.lat.toFixed(7), Lng: r.lng.toFixed(7) });
+      ok++;
+    } catch (e) { if (/Excel/.test(e.message)) { toast(e.message, true); break; } }
+  }
+  await load(true);
+  toast(`Znaleziono ${ok}/${miss.length}.` + (noAddr ? ` ${noAddr} bez adresu – ustaw ręcznie.` : ""));
+}
+
+// ------------------------------------------------------------------ Excel: pobieranie / wgrywanie
+$("#btnXlsxDown").onclick = () => { const a = document.createElement("a"); a.href = "/api/xlsx"; a.click(); };
+$("#btnXlsxUp").onclick = () => $("#fileXlsx").click();
+$("#fileXlsx").onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  if (!/\.xlsx$/i.test(f.name)) return toast("Wybierz plik .xlsx", true);
+  if (!confirm(`Zastąpić WSZYSTKIE dane na serwerze plikiem ${f.name}?\n\n` +
+      `Wskazówka: najpierw pobierz aktualny plik („Pobierz Excel”), zmień go i wgraj – inaczej zmiany zrobione w międzyczasie na mapie przepadną.\n\n` +
+      `Kopia obecnych danych zostanie zapisana na serwerze w folderze „kopie”.`)) return;
+  try {
+    toast("Wgrywanie…");
+    const r = await fetch("/api/xlsx", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401 && j.login) { setEditor(false); render(); }
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    await load();
+    toast(`Wgrano: ${j.stores} sklepów, ${j.incidents} usterek` + (j.orphans ? ` (${j.orphans} usterek wskazuje na nieistniejący sklep)` : ""));
+  } catch (err) { toast(err.message, true); }
+};
+
+// ------------------------------------------------------------------ logowanie do edycji
+function loginDialog() {
+  dialog("Logowanie do edycji",
+    `<p class="mut full" style="margin:0;font-size:12px">Oglądanie mapy nie wymaga logowania. Hasło jest potrzebne, aby dodawać i zmieniać sklepy, usterki i regiony.</p>
+     <label class="full">Hasło<input type="password" name="password" autocomplete="current-password" required autofocus></label>`,
+    async (fd) => {
+      try { await api("POST", "/api/login", { password: fd.get("password") }); }
+      catch (e) { toast(e.message, true); return false; }
+      await load(true);
+      toast("Zalogowano – możesz edytować");
+    }, "Zaloguj");
+}
+$("#btnLogin").onclick = loginDialog;
+$("#btnLogout").onclick = async () => {
+  try { await api("POST", "/api/logout"); } catch {}
+  map.closePopup();
+  await load(true);
+  toast("Wylogowano");
+};
+
+// ------------------------------------------------------------------ motyw i ukrywanie menu
+const ls = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+function setTheme(v) { const r = document.documentElement; if (v === "light" || v === "dark") r.setAttribute("data-theme", v); else r.removeAttribute("data-theme"); }
+const th = ls.get("motyw-menu") || "auto";
+setTheme(th); $("#theme").value = th;
+$("#theme").onchange = (e) => { setTheme(e.target.value); ls.set("motyw-menu", e.target.value); };
+if (ls.get("menu-ukryte") === "1") $("#app").classList.add("collapsed");
+$("#toggleMenu").onclick = () => {
+  const c = $("#app").classList.toggle("collapsed");
+  ls.set("menu-ukryte", c ? "1" : "0");
+  setTimeout(() => map.invalidateSize(), 50);
+};
+
+// ------------------------------------------------------------------ przyciski i zdarzenia
+$("#btnAddStore").onclick = () => editStore(null);
+$("#btnAddIncident").onclick = () => editIncident(null);
+$("#btnRegions").onclick = editRegions;
+$("#btnReload").onclick = () => load(true).then(() => toast("Wczytano ponownie " + D.file));
+$("#search").oninput = (e) => { F.q = e.target.value.trim().toLowerCase(); render(); };
+map.on("contextmenu", (e) => {
+  if (!EDITOR) return;
+  L.popup().setLatLng(e.latlng).setContent(() => {
+    const d = document.createElement("div");
+    d.innerHTML = `<button class="btn sm">+ Dodaj sklep tutaj</button>`;
+    d.querySelector("button").onclick = () => { map.closePopup(); editStore(null, e.latlng); };
+    return d;
+  }).openOn(map);
+});
+// zmiany zrobione bezpośrednio w pliku (Excel) wczytują się same
+setInterval(async () => {
+  if ($("#dlg").open || pickCb) return;
+  try {
+    const v = await (await fetch("/api/version")).json();
+    if (v.mtime && v.mtime !== mtime) { await load(true); toast("Plik się zmienił – wczytano ponownie"); }
+  } catch {}
+}, 5000);
+
+load().catch((e) => toast("Nie można wczytać danych: " + e.message, true));

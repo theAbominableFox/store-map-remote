@@ -39,6 +39,46 @@ const MAP_STYLES = {
   ] },
 };
 let baseLayers = [];
+// W trakcie przelotu warstwa tylko skaluje kafelki, które już ma – bez pobierania poziomów pośrednich
+// (inaczej zapychają kolejkę i cel długo jest pusty). Kafelki celu pobiera z góry preloadTiles().
+let flying = false, flyTimer = 0;
+const FlyTileLayer = L.TileLayer.extend({
+  _setView(center, zoom, noPrune, noUpdate) {
+    if (flying) return this._setZoomTransforms(center, zoom);
+    L.TileLayer.prototype._setView.call(this, center, zoom, noPrune, noUpdate);
+  },
+  _update(center) { if (!flying) L.TileLayer.prototype._update.call(this, center); },
+});
+let preloaded = [];
+function preloadTiles(center, zoom) {
+  for (const img of preloaded) if (!img.complete) img.src = "";   // poprzedni cel już niepotrzebny
+  preloaded = [];
+  const half = map.getSize().divideBy(2), world = 2 ** zoom;
+  const c = map.project(center, zoom);
+  const a = c.subtract(half).divideBy(256).floor(), b = c.add(half).divideBy(256).floor();
+  for (const l of baseLayers) {
+    if (!(l instanceof FlyTileLayer) || zoom > l.options.maxNativeZoom) continue;
+    for (let x = a.x; x <= b.x; x++) for (let y = Math.max(0, a.y); y <= Math.min(world - 1, b.y); y++) {
+      const t = L.point(((x % world) + world) % world, y);
+      const img = new Image();
+      img.src = L.Util.template(l._url, { s: l._getSubdomain(t), x: t.x, y: t.y, z: zoom });
+      preloaded.push(img);
+    }
+  }
+}
+function flyStart(center, zoom) {
+  preloadTiles(center, zoom);
+  flying = true;
+  clearTimeout(flyTimer);
+  flyTimer = setTimeout(flyEnd, FLY_S * 1000 + 300);   // przerwany przelot nie wysyła "moveend"
+}
+function flyEnd() {
+  if (!flying) return;
+  flying = false;
+  clearTimeout(flyTimer);
+  for (const l of baseLayers) if (l instanceof FlyTileLayer) l._setView(map.getCenter(), map.getZoom());
+}
+map.on("moveend", flyEnd);
 let currentStyle = "standard";
 
 // Granice kraju i województw (static/granice.geojson) – czerwone na jasnych mapach, białe na ciemnych.
@@ -62,9 +102,11 @@ function setMapStyle(key) {
   currentStyle = key;
   if (borders) borders.setStyle(borderStyle);
   baseLayers.forEach((l) => map.removeLayer(l));
-  baseLayers = MAP_STYLES[key].layers.map(([url, attribution]) =>
-    L.tileLayer(url, { maxZoom: 19, maxNativeZoom: url.includes("arcgis") ? 16 : 19, attribution }).addTo(map));
-  baseLayers.forEach((l) => l.bringToBack());
+  // pod spodem zgrubna mapa kraju (zawsze poziom 7) – widać ją zamiast pustego tła, zanim wczytają się szczegóły
+  baseLayers = [L.tileLayer(MAP_STYLES[key].layers[0][0], { minZoom: 6, maxZoom: 19, minNativeZoom: 7, maxNativeZoom: 7, keepBuffer: 4, zIndex: 1 })];
+  MAP_STYLES[key].layers.forEach(([url, attribution], i) => baseLayers.push(
+    new FlyTileLayer(url, { maxZoom: 19, maxNativeZoom: url.includes("arcgis") ? 16 : 19, keepBuffer: 4, zIndex: 2 + i, attribution })));
+  baseLayers.forEach((l) => l.addTo(map));
   const el = document.getElementById("map");
   Object.keys(MAP_STYLES).forEach((k) => el.classList.toggle("ms-" + k, k === key));
   try { localStorage.setItem("styl-mapy", key); } catch {}
@@ -266,7 +308,10 @@ function flyToStore(m, zoom = map.getZoom()) {
   const to = map.unproject(map.project(m.getLatLng(), zoom).subtract([0, down]), zoom);
   const animate = !reducedMotion.matches;
   if (zoom === map.getZoom() && map.getBounds().contains(m.getLatLng())) map.panTo(to, { animate, duration: 0.6 });
-  else map.flyTo(to, zoom, { animate, duration: FLY_S });
+  else {
+    if (animate) flyStart(to, zoom);
+    map.flyTo(to, zoom, { animate, duration: FLY_S });
+  }
 }
 
 function focusOn(id) {
@@ -279,7 +324,12 @@ function fitAll(animated) {
   const pts = D.stores.filter((s) => hasGeo(s)).map((s) => [+s.Lat, +s.Lng]);
   map.invalidateSize();
   if (!pts.length) return;
-  if (animated && !reducedMotion.matches) map.flyToBounds(pts, { padding: [30, 30], duration: FLY_S });
+  if (animated && !reducedMotion.matches) {
+    const bounds = L.latLngBounds(pts);
+    const zoom = map.getBoundsZoom(bounds, false, L.point(60, 60));
+    flyStart(bounds.getCenter(), zoom);
+    map.flyToBounds(bounds, { padding: [30, 30], duration: FLY_S });
+  }
   else map.fitBounds(pts, { padding: [30, 30], animate: false });
 }
 

@@ -160,7 +160,7 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
   aside { border-right: 0; border-top: 1px solid var(--bd); }
 }
 
-.home-view { background: var(--panel); color: var(--tx); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; box-shadow: 0 1px 4px rgba(0,0,0,.2); cursor: pointer; font: 12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.home-view { width: 34px; height: 34px; display: grid; place-items: center; background: var(--panel); color: var(--tx); border: 1px solid var(--bd); border-radius: 8px; padding: 0; box-shadow: 0 1px 4px rgba(0,0,0,.2); cursor: pointer; }
 .home-view:hover { background: var(--bg); }
 
 /* Styl mapy (przełącznik w lewym dolnym rogu) */

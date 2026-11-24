@@ -260,6 +260,19 @@ function fitAll() {
   if (pts.length) map.fitBounds(pts, { padding: [30, 30] });
 }
 
+// Przycisk w prawym górnym rogu: ten sam widok, co po otwarciu strony
+const homeView = L.control({ position: "topright" });
+homeView.onAdd = () => {
+  const b = L.DomUtil.create("button", "home-view");
+  b.type = "button";
+  b.title = "Pokaż całą Polskę";
+  b.textContent = "Widok domyślny";
+  L.DomEvent.disableClickPropagation(b);
+  b.onclick = () => { map.closePopup(); fitAll(); };
+  return b;
+};
+homeView.addTo(map);
+
 // ------------------------------------------------------------------ legenda
 // Legenda da się zwinąć do przycisku „Legenda” (na telefonie domyślnie zwinięta). Wybór pamięta przeglądarka.
 const legend = L.control({ position: "bottomright" });

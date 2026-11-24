@@ -156,8 +156,12 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
   .app { grid-template-columns: 1fr; grid-template-rows: 46vh 1fr; }
   .app.collapsed { grid-template-rows: 1fr; }
   main { order: -1; }
+  .hint { top: 56px; }
   aside { border-right: 0; border-top: 1px solid var(--bd); }
 }
+
+.home-view { background: var(--panel); color: var(--tx); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; box-shadow: 0 1px 4px rgba(0,0,0,.2); cursor: pointer; font: 12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.home-view:hover { background: var(--bg); }
 
 /* Styl mapy (przełącznik w lewym dolnym rogu) */
 #map.ms-muted .leaflet-tile-pane { filter: brightness(.8) saturate(.6); }

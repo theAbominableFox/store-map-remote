@@ -62,8 +62,9 @@ def main():
             "Rodzaj": kind, "MPK": f"MPK-{n:03d}" if region != "Inne lokalizacje" else "", "Status": status,
             "Lat": str(lat), "Lng": str(lng), "ID": f"{n:08x}",
         })
+    due = {1: "2026-11-25", 2: "2026-11-28", 4: "2026-11-20"}   # przewidywana data rozwiązania
     inc = [{"ID": f"{0xa0 + n:08x}", "POS": pos, "Priorytet": prio, "Komentarz": text, "Status": st,
-            "Data zgłoszenia": rep, "Data zamknięcia": closed}
+            "Data zgłoszenia": rep, "Data zamknięcia": closed, "Data przewidywana": due.get(n, "")}
            for n, (pos, prio, text, st, rep, closed) in enumerate(INCIDENTS, start=1)]
     regs = [{"Region": r, "Kolor": c, "Typ": t} for r, c, t in REGIONS]
 

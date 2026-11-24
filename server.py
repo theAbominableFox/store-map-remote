@@ -51,7 +51,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
 
 APP_STORE_COLS = ["Status", "Lat", "Lng", "ID"]
-INCIDENT_COLS = ["ID", "POS", "Priorytet", "Komentarz", "Status", "Data zgłoszenia", "Data zamknięcia"]
+INCIDENT_COLS = ["ID", "POS", "Priorytet", "Komentarz", "Status", "Data zgłoszenia", "Data zamknięcia", "Data przewidywana"]
 REGION_COLS = ["Region", "Kolor", "Typ"]
 # Typ regionu: "sklepy" (zwykłe sklepy) albo "inne" (lokalizacje, które nie są sklepami – nie liczą się do statystyk)
 REGION_TYPES = ["sklepy", "inne"]
@@ -448,6 +448,11 @@ def mutate(method, kind, rid, data):
         for k, v in data.items():
             if k in allowed and k != "ID":
                 rec[k] = "" if v is None else str(v).strip()
+        if kind == "incidents" and data.get("Data przewidywana"):
+            try:
+                datetime.strptime(rec["Data przewidywana"], "%Y-%m-%d")
+            except ValueError:
+                raise BadRequest("Nieprawidłowa przewidywana data rozwiązania (oczekiwano RRRR-MM-DD).")
         if kind == "incidents":
             check_incident(rec, d)
         else:

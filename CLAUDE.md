@@ -60,7 +60,7 @@ The only dependency is `openpyxl`.
 - Sheet 1 (`POSy`, read by position, not by name): stores. Column 0 = store name (used as the key).
   Columns found by regex: `adres`, `region`, `rodzaj|typ`. App columns: `Status` (`aktywny`/`pending` = "nowe otwarcie"),
   `Lat`, `Lng`, `ID` (8-hex uuid).
-- `Incydenty`: `ID, POS, Priorytet, Komentarz, Status, Data zgłoszenia, Data zamknięcia`.
+- `Incydenty`: `ID, POS, Priorytet, Komentarz, Status, Data zgłoszenia, Data zamknięcia, Data przewidywana` (optional `YYYY-MM-DD`).
   `POS` = store name; an incident **must** reference an existing store (server returns 400 otherwise).
   Priorities `niski/średni/wysoki`; statuses `nowa → w trakcie → naprawiona` (closing date is set by the server).
 - `Regiony`: `Region, Kolor, Typ`. `Typ = "inne"` marks non-store locations (e.g. "Inne lokalizacje" – warehouses):

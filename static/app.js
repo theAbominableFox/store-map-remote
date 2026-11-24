@@ -297,11 +297,12 @@ function renderLegend() {
 // ------------------------------------------------------------------ popup sklepu
 function issueHtml(i) {
   return `<div class="iss ${isOpen(i) ? "" : "done"}" data-inc="${i.ID}" style="--pc:${isOpen(i) ? PRIO_COLOR[i.Priorytet] : "var(--bd)"}">
-    <div class="t"><span>${esc(i.Komentarz) || "<i>bez opisu</i>"}</span>
-      <div class="m">priorytet: ${esc(i.Priorytet)} · ${esc(i["Data zgłoszenia"])}${i["Data zamknięcia"] ? " → " + esc(i["Data zamknięcia"]) : ""}</div></div>
+    <div class="t"><span>${esc(i.Komentarz) || "<i>bez opisu</i>"}</span></div>
     <button class="st ${clsOf(i.Status)}" data-a="cycle" ${EDITOR ? 'title="Kliknij, aby zmienić status"' : "disabled"}>${STATUS_LABEL[i.Status] || esc(i.Status)}</button>
     <button class="st ed" data-a="iedit" title="Edytuj">✎</button>
-    <button class="st x ed" data-a="idel" title="Usuń">×</button></div>`;
+    <button class="st x ed" data-a="idel" title="Usuń">×</button>
+    <div class="m"><div>priorytet: ${esc(i.Priorytet)} · ${esc(i["Data zgłoszenia"])}${i["Data zamknięcia"] ? " → " + esc(i["Data zamknięcia"]) : ""}</div>
+      ${i["Data przewidywana"] ? `<div>przewidywane rozwiązanie: ${esc(i["Data przewidywana"].slice(0, 10))}</div>` : ""}</div></div>`;
 }
 function storePopup(s) {
   const el = document.createElement("div");
@@ -435,7 +436,8 @@ function editIncident(i, store) {
     <div class="full"><label>Priorytet</label><div class="prio">${PRIORITIES.map((p) =>
       `<label style="--pc:${PRIO_COLOR[p]}"><input type="radio" name="Priorytet" value="${p}" ${i.Priorytet === p ? "checked" : ""}>${p}</label>`).join("")}</div></div>
     <label class="full">Opis usterki<textarea name="Komentarz" placeholder="Co nie działa, co trzeba zrobić…">${esc(i.Komentarz)}</textarea></label>
-    <label>Status<select name="Status">${options(STATUSES, i.Status, STATUS_LABEL)}</select></label>`;
+    <label class="full">Przewidywana data rozwiązania<input type="date" name="Data przewidywana" value="${esc((i["Data przewidywana"] || "").slice(0, 10))}"></label>
+    <label class="full">Status<select name="Status">${options(STATUSES, i.Status, STATUS_LABEL)}</select></label>`;
   dialog(isNew ? "Nowa usterka" : "Edytuj usterkę", html, async (fd) => {
     const data = Object.fromEntries(fd.entries());
     try { await api(isNew ? "POST" : "PUT", "/api/incidents" + (isNew ? "" : "/" + i.ID), data); }

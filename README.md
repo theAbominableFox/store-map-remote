@@ -154,7 +154,7 @@ When running locally on Windows, **close the file in Excel before saving from th
 
 - Sheet **POSy** (stores; always the first sheet): the store-list columns (POS Nazwa, Adres, Telefon, Data otwarcia, Region, Kierownik sklepu, Franczyzobiorca, Rodzaj, MPK; first column = store name; columns with "Adres", "Region",
   "Rodzaj" are recognised automatically) + `Status` (`aktywny`/`pending`), `Lat`, `Lng`, `ID`.
-- Sheet **Incydenty**: `ID, POS (store name), Priorytet (niski/średni/wysoki), Komentarz, Status (nowa/w trakcie/naprawiona), Data zgłoszenia, Data zamknięcia`.
+- Sheet **Incydenty**: `ID, POS (store name), Priorytet (niski/średni/wysoki), Komentarz, Status (nowa/w trakcie/naprawiona), Data zgłoszenia, Data zamknięcia, Data przewidywana (predicted resolution date, optional)`.
 - Sheet **Regiony**: `Region, Kolor, Typ` – `Typ` = `sklepy` or `inne` (locations that are not stores, e.g. warehouses; they appear on the map but don't count in the stores / nowe / franczyz tiles).
 - CSV: `file.csv` + `file_incydenty.csv` + `file_regiony.csv` (`;`, UTF-8).
 

@@ -317,9 +317,7 @@ function storePopup(s) {
     <h4>Usterki</h4>${incs.map(issueHtml).join("") || '<div class="mut">Brak usterek.</div>'}
     <div class="btns ed">
       <button class="btn danger sm" data-a="inc">+ Usterka</button>
-      <button class="btn sec sm" data-a="toggle">${isPending(s) ? "✓ Otwarty (aktywny)" : "Oznacz: nowe otwarcie"}</button>
       <button class="btn sec sm" data-a="edit">Edytuj</button>
-      <button class="btn sec sm" data-a="move">Przesuń</button>
       <button class="btn sec sm" data-a="del" style="color:var(--danger)">Usuń</button>
     </div>`;
   el.querySelectorAll("[data-inc]").forEach((box) => {
@@ -333,9 +331,7 @@ function storePopup(s) {
     };
   });
   el.querySelector('[data-a="inc"]').onclick = () => { map.closePopup(); editIncident(null, s); };
-  el.querySelector('[data-a="toggle"]').onclick = () => saveStore(s.ID, { Status: isPending(s) ? "aktywny" : "pending" });
   el.querySelector('[data-a="edit"]').onclick = () => { map.closePopup(); editStore(s); };
-  el.querySelector('[data-a="move"]').onclick = () => { map.closePopup(); pick((ll) => ll && saveStore(s.ID, { Lat: ll.lat.toFixed(7), Lng: ll.lng.toFixed(7) })); };
   el.querySelector('[data-a="del"]').onclick = () => {
     const n = incFor(s).length;
     if (confirm(`Usunąć sklep „${nameOf(s)}” z pliku ${D.file}?` + (n ? `\nZostanie też usuniętych ${n} usterek tego sklepu.` : "")))
@@ -353,7 +349,6 @@ async function run(fn, msg, keepPopup) {
     if (msg) toast(msg);
   } catch (e) { toast(e.message, true); }
 }
-const saveStore = (id, data) => run(() => api(id ? "PUT" : "POST", "/api/stores" + (id ? "/" + id : ""), data), "Zapisano w " + D.file);
 const saveIncident = (id, data, keepPopup) => run(() => api(id ? "PUT" : "POST", "/api/incidents" + (id ? "/" + id : ""), data), "Zapisano w " + D.file, keepPopup);
 
 // ------------------------------------------------------------------ wskazywanie na mapie

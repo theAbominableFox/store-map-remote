@@ -131,7 +131,7 @@ Requires Python 3 and openpyxl – `install.bat` sets both up.
 | What | How |
 |---|---|
 | Add a store | **+ Dodaj sklep**, or right-click the map. Type the address and click *Znajdź na mapie*, or *Wskaż na mapie* |
-| New opening ↔ active | store popup → *Oznacz: nowe otwarcie* / *✓ Otwarty* |
+| New opening ↔ active, moving a pin | store popup → *Edytuj* → *Status* / *Wskaż na mapie* |
 | Add an incident | **+ Usterka** (pick the store), or the store popup → *+ Usterka*. Incidents always belong to an existing store |
 | Incident status | click the status in the popup: **Nowa → W trakcie → Naprawiona** (the closing date is recorded) |
 | Filters | chips: regions (several at once), Z usterkami / Nowe otwarcia, Własne / Franczyzy; search |

@@ -216,12 +216,13 @@ function render() {
     const incs = openIncFor(s);
     const m = L.marker([+s.Lat, +s.Lng], { icon: storeIcon(s, incs), zIndexOffset: incs.length ? 500 + prioRank(topPriority(incs)) * 100 : 0,
       riseOnHover: true, riseOffset: 10000 })   // pinezka pod kursorem wychodzi na wierzch
-      .bindPopup(() => storePopup(s), { maxWidth: 380 }).addTo(layer);
+      .bindPopup(() => storePopup(s), { maxWidth: 380, autoPan: false }).addTo(layer);   // zamiast autoPan mapa płynnie dojeżdża (flyToStore)
+    m.on("popupopen", () => { if (!quietPopup) flyToStore(m); });
     const tip = incs.length ? ` – usterki: ${incs.length} (${topPriority(incs)})` : "";
     m.bindTooltip(esc(nameOf(s) + tip), { direction: "top", offset: [0, -10] });
     markers[s.ID] = m;
   }
-  if (openPopupId && markers[openPopupId]) markers[openPopupId].openPopup();
+  if (openPopupId && markers[openPopupId]) openQuietly(markers[openPopupId]);
   // statystyki
   $("#sStores").textContent = D.stores.filter(isStore).length;
   $("#sIssues").textContent = D.incidents.filter(isOpen).length;
@@ -248,16 +249,38 @@ function renderList(vs) {
   document.querySelectorAll("#list .item").forEach((el) => (el.onclick = () => focusOn(el.dataset.id)));
 }
 
+// Płynne przejścia; przy włączonym w systemie ograniczeniu animacji mapa przeskakuje od razu.
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const FLY_S = 1.2;
+let quietPopup = false;   // true = otwarcie dymka bez ruszania mapy (np. po odświeżeniu danych)
+function openQuietly(m) {
+  quietPopup = true;
+  try { m.openPopup(); } finally { quietPopup = false; }
+}
+// Pinezka na środek, a przy wysokim dymku niżej – tak, żeby dymek zmieścił się nad nią
+function flyToStore(m, zoom = map.getZoom()) {
+  if ($("#map").classList.contains("picking")) return;
+  const el = m.getPopup().getElement();
+  const half = map.getSize().y / 2;
+  const down = Math.max(0, (el ? el.offsetHeight : 0) + 35 - half);
+  const to = map.unproject(map.project(m.getLatLng(), zoom).subtract([0, down]), zoom);
+  const animate = !reducedMotion.matches;
+  if (zoom === map.getZoom() && map.getBounds().contains(m.getLatLng())) map.panTo(to, { animate, duration: 0.6 });
+  else map.flyTo(to, zoom, { animate, duration: FLY_S });
+}
+
 function focusOn(id) {
   const m = markers[id];
-  if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 12)); m.openPopup(); return; }
+  if (m) { openQuietly(m); flyToStore(m, Math.max(map.getZoom(), 12)); return; }
   const s = storeById(id);
   if (s && !hasGeo(s)) EDITOR ? editStore(s) : toast("Ten sklep nie ma jeszcze lokalizacji na mapie.");
 }
-function fitAll() {
+function fitAll(animated) {
   const pts = D.stores.filter((s) => hasGeo(s)).map((s) => [+s.Lat, +s.Lng]);
   map.invalidateSize();
-  if (pts.length) map.fitBounds(pts, { padding: [30, 30] });
+  if (!pts.length) return;
+  if (animated && !reducedMotion.matches) map.flyToBounds(pts, { padding: [30, 30], duration: FLY_S });
+  else map.fitBounds(pts, { padding: [30, 30], animate: false });
 }
 
 // Przycisk w prawym górnym rogu: ten sam widok, co po otwarciu strony
@@ -269,7 +292,7 @@ homeView.onAdd = () => {
   b.setAttribute("aria-label", "Widok domyślny");
   b.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>`;
   L.DomEvent.disableClickPropagation(b);
-  b.onclick = () => { map.closePopup(); fitAll(); };
+  b.onclick = () => { map.closePopup(); fitAll(true); };
   return b;
 };
 homeView.addTo(map);

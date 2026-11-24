@@ -28,10 +28,15 @@
       <button class="btn view-only" id="btnLogin" title="Zaloguj się, aby dodawać i zmieniać dane">🔒 Zaloguj do edycji</button>
       <button class="btn sec" id="btnReload" title="Wczytaj ponownie z pliku">⟳</button>
     </div>
-    <input id="search" type="search" placeholder="Szukaj sklepu, adresu, kierownika…">
-    <div class="chips" id="chipsReg"></div>
-    <div class="chips" id="chipsKind"></div>
-    <div class="chips" id="chipsOwn"></div>
+    <div class="search-row">
+      <input id="search" type="search" placeholder="Szukaj sklepu, adresu, kierownika…">
+      <button type="button" class="btn sec" id="btnFilters" aria-controls="filters"></button>
+    </div>
+    <div class="filters" id="filters">
+      <div class="chips" id="chipsReg"></div>
+      <div class="chips" id="chipsKind"></div>
+      <div class="chips" id="chipsOwn"></div>
+    </div>
   </div>
 
   <div id="missing" class="missing hidden"></div>

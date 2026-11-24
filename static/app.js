@@ -278,6 +278,7 @@ function render() {
   $("#sNew").textContent = D.stores.filter((s) => isStore(s) && isPending(s)).length;
   $("#sFr").textContent = D.stores.filter((s) => isStore(s) && isFranchise(s)).length;
   renderChips();
+  renderFilterButton();
   renderList(vs);
   drawRoute();
 }
@@ -645,6 +646,20 @@ $("#toggleMenu").onclick = () => {
   ls.set("menu-ukryte", c ? "1" : "0");
   setTimeout(() => map.invalidateSize(), 50);
 };
+
+// ------------------------------------------------------------------ zwijane filtry
+// Na niskim ekranie i telefonie domyślnie zwinięte; wybór pamięta przeglądarka. Licznik = ile filtrów jest włączonych.
+let filtersOpen = ls.get("filtry") ? ls.get("filtry") === "1" : !matchMedia("(max-height: 800px), (max-width: 760px)").matches;
+function renderFilterButton() {
+  const n = F.reg.size + (F.kind !== "all") + (F.own !== "all");
+  const b = $("#btnFilters");
+  b.textContent = `Filtry${n ? ` (${n})` : ""} ${filtersOpen ? "▴" : "▾"}`;
+  b.classList.toggle("act", n > 0);
+  b.setAttribute("aria-expanded", filtersOpen);
+  $("#filters").classList.toggle("hidden", !filtersOpen);
+}
+$("#btnFilters").onclick = () => { filtersOpen = !filtersOpen; ls.set("filtry", filtersOpen ? "1" : "0"); renderFilterButton(); };
+renderFilterButton();
 
 // ------------------------------------------------------------------ trasa (same proste linie między lokalizacjami)
 // Przycisk włącza zaznaczanie, kolejne kliknięcia pinezek (albo pozycji listy) dodają przystanki, drugie kliknięcie

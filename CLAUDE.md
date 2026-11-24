@@ -77,6 +77,8 @@ The only dependency is `openpyxl`.
 - Map styles (bottom-left picker, `localStorage "styl-mapy"`): `standard`, `muted`, `dark` (CSS filters on the OSM
   tile pane) and `darkgray` (Esri Dark Gray base + reference labels). Borders are red on light styles, white on dark ones.
 - Marker stacking: `zIndexOffset` = 500 + 100 × top open-incident priority; `riseOnHover` with `riseOffset: 10000`.
+- Trasa (button next to the magnifier): stop list of store IDs in `localStorage "trasa"` (per browser, not in the xlsx), drawn as
+  straight lines; `googleLinks()` builds Google Maps links from coordinates only. No routing on the server (user decision).
 - The page polls `/api/version` every 5 s and reloads when the file changes (edits made in Excel show up by themselves).
 
 ## Gotchas

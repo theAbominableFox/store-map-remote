@@ -140,6 +140,7 @@ Requires Python 3 and openpyxl – `install.bat` sets both up.
 | Excel | **⬇ Pobierz Excel** / **⬆ Wgraj Excel** (an upload replaces everything; the old file goes to `kopie/`) || Missing coordinates | *Geokoduj brakujące* looks the addresses up in OpenStreetMap |
 | Menu | ☰ hides the menu; *Kolor menu*: auto / light / dark |
 | Legend | click **Legenda** (bottom-right) to fold/unfold it; folded by default on phones (remembered per browser) |
+| Route | route button (top-right, next to the magnifier), click pins in order, click the button again: list of stops with a Google Maps link. Straight lines only; the list is remembered per browser |
 | Map style | button in the bottom-left corner: Standardowa, Przygaszona, Ciemna, Ciemnoszara (remembered per browser) |
 
 ### Pins

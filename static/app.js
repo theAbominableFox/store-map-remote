@@ -249,6 +249,13 @@ function renderChips() {
 }
 
 // ------------------------------------------------------------------ rysowanie
+// W trybie trasy kliknięcie pinezki dodaje przystanek zamiast otwierać dymek
+const StoreMarker = L.Marker.extend({
+  _openPopup(e) {
+    if (routeRec) { L.DomEvent.stop(e); addStop(this.options.storeId); return; }
+    L.Marker.prototype._openPopup.call(this, e);
+  },
+});
 function render() {
   const openPopupId = Object.keys(markers).find((id) => markers[id].isPopupOpen());
   layer.clearLayers();
@@ -256,8 +263,8 @@ function render() {
   const vs = D.stores.filter(visible);
   for (const s of vs) if (hasGeo(s)) {
     const incs = openIncFor(s);
-    const m = L.marker([+s.Lat, +s.Lng], { icon: storeIcon(s, incs), zIndexOffset: incs.length ? 500 + prioRank(topPriority(incs)) * 100 : 0,
-      riseOnHover: true, riseOffset: 10000 })   // pinezka pod kursorem wychodzi na wierzch
+    const m = new StoreMarker([+s.Lat, +s.Lng], { icon: storeIcon(s, incs), zIndexOffset: incs.length ? 500 + prioRank(topPriority(incs)) * 100 : 0,
+      riseOnHover: true, riseOffset: 10000, storeId: s.ID })   // pinezka pod kursorem wychodzi na wierzch
       .bindPopup(() => storePopup(s), { maxWidth: 380, autoPan: false }).addTo(layer);   // zamiast autoPan mapa płynnie dojeżdża (flyToStore)
     m.on("popupopen", () => { if (!quietPopup) flyToStore(m); });
     const tip = incs.length ? ` – usterki: ${incs.length} (${topPriority(incs)})` : "";
@@ -272,6 +279,7 @@ function render() {
   $("#sFr").textContent = D.stores.filter((s) => isStore(s) && isFranchise(s)).length;
   renderChips();
   renderList(vs);
+  drawRoute();
 }
 
 function renderList(vs) {
@@ -288,7 +296,7 @@ function renderList(vs) {
       ${isOther(s) ? '<span class="tag">nie sklep</span>' : ""}${isPending(s) ? '<span class="tag">nowe</span>' : ""}${isFranchise(s) ? '<span class="tag">fr.</span>' : ""}
       ${incs.length ? `<span class="badge" style="background:${PRIO_COLOR[topPriority(incs)]}">${incs.length}</span>` : ""}</div>`;
   }).join("") || `<p class="mut" style="padding:12px">Brak wyników.</p>`;
-  document.querySelectorAll("#list .item").forEach((el) => (el.onclick = () => focusOn(el.dataset.id)));
+  document.querySelectorAll("#list .item").forEach((el) => (el.onclick = () => (routeRec ? addStop(el.dataset.id) : focusOn(el.dataset.id))));
 }
 
 // Płynne przejścia; przy włączonym w systemie ograniczeniu animacji mapa przeskakuje od razu.
@@ -321,16 +329,16 @@ function focusOn(id) {
   if (s && !hasGeo(s)) EDITOR ? editStore(s) : toast("Ten sklep nie ma jeszcze lokalizacji na mapie.");
 }
 function fitAll(animated) {
-  const pts = D.stores.filter((s) => hasGeo(s)).map((s) => [+s.Lat, +s.Lng]);
+  fitPoints(D.stores.filter((s) => hasGeo(s)).map((s) => [+s.Lat, +s.Lng]), animated);
+}
+function fitPoints(pts, animated, top = 30) {
   map.invalidateSize();
   if (!pts.length) return;
-  if (animated && !reducedMotion.matches) {
-    const bounds = L.latLngBounds(pts);
-    const zoom = map.getBoundsZoom(bounds, false, L.point(60, 60));
-    flyStart(bounds.getCenter(), zoom);
-    map.flyToBounds(bounds, { padding: [30, 30], duration: FLY_S });
-  }
-  else map.fitBounds(pts, { padding: [30, 30], animate: false });
+  const opt = { paddingTopLeft: [30, top], paddingBottomRight: [30, 30], maxZoom: 15 };
+  if (!animated || reducedMotion.matches) { map.fitBounds(pts, { ...opt, animate: false }); return; }
+  const t = map._getBoundsCenterZoom(L.latLngBounds(pts), opt);
+  flyStart(t.center, t.zoom);
+  map.flyTo(t.center, t.zoom, { duration: FLY_S });
 }
 
 // Przycisk w prawym górnym rogu: ten sam widok, co po otwarciu strony
@@ -346,6 +354,9 @@ homeView.onAdd = () => {
   return b;
 };
 homeView.addTo(map);
+$(".home-view").insertAdjacentHTML("beforebegin", `<button type="button" class="home-view route-btn" id="btnRoute" title="Zaznacz trasę" aria-label="Zaznacz trasę" aria-pressed="false">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/></svg></button>`);
+L.DomEvent.disableClickPropagation($("#btnRoute"));
 
 // ------------------------------------------------------------------ legenda
 // Legenda da się zwinąć do przycisku „Legenda” (na telefonie domyślnie zwinięta). Wybór pamięta przeglądarka.
@@ -441,7 +452,7 @@ const saveIncident = (id, data, keepPopup) => run(() => api(id ? "PUT" : "POST",
 
 // ------------------------------------------------------------------ wskazywanie na mapie
 let pickCb = null;
-function pick(cb) { pickCb = cb; $("#pickHint").classList.remove("hidden"); $("#map").classList.add("picking"); }
+function pick(cb) { if (routeRec) finishRoute(); pickCb = cb; $("#pickHint").classList.remove("hidden"); $("#map").classList.add("picking"); }
 function endPick() { pickCb = null; $("#pickHint").classList.add("hidden"); $("#map").classList.remove("picking"); }
 map.on("click", (e) => { if (pickCb) { const cb = pickCb; endPick(); cb(e.latlng); } });
 $("#pickCancel").onclick = (e) => { e.preventDefault(); const cb = pickCb; endPick(); cb && cb(null); };
@@ -633,6 +644,138 @@ $("#toggleMenu").onclick = () => {
   const c = $("#app").classList.toggle("collapsed");
   ls.set("menu-ukryte", c ? "1" : "0");
   setTimeout(() => map.invalidateSize(), 50);
+};
+
+// ------------------------------------------------------------------ trasa (same proste linie między lokalizacjami)
+// Przycisk włącza zaznaczanie, kolejne kliknięcia pinezek (albo pozycji listy) dodają przystanki, drugie kliknięcie
+// przycisku zapisuje listę w tej przeglądarce i otwiera panel. Trasę po drogach liczy dopiero Google po kliknięciu linku.
+let routeRec = false, routeBackup = [];
+let routeIds = [];
+try { const a = JSON.parse(ls.get("trasa") || "[]"); if (Array.isArray(a)) routeIds = a.filter((x) => typeof x === "string"); } catch {}
+let routeOpen = ls.get("trasa-zwinieta") !== "1";
+map.createPane("route");
+map.getPane("route").style.zIndex = 450;           // nad granicami, pod pinezkami
+map.getPane("route").style.pointerEvents = "none";
+map.createPane("routeNum");
+map.getPane("routeNum").style.zIndex = 640;        // numery nad pinezkami, pod dymkami
+map.getPane("routeNum").style.pointerEvents = "none";
+const routeLayer = L.layerGroup().addTo(map);
+
+const routeStops = () => routeIds.map(storeById).filter((s) => s && hasGeo(s));
+const stopLatLng = (s) => L.latLng(+s.Lat, +s.Lng);
+// w trakcie zaznaczania lista jest tylko w pamięci; zapisuje ją zakończenie (finishRoute)
+function setRoute(ids) { routeIds = ids; if (!routeRec) saveRoute(); drawRoute(); }
+function saveRoute() { ls.set("trasa", JSON.stringify(routeIds)); }
+
+function addStop(id) {
+  const s = storeById(id);
+  if (!s || !hasGeo(s)) return toast("Ten sklep nie ma jeszcze lokalizacji na mapie.");
+  const stops = routeStops();
+  if (stops.length && stops[stops.length - 1].ID === id) return;   // drugi klik w tę samą pinezkę
+  setRoute([...stops.map((x) => x.ID), id]);
+}
+function startRoute() {
+  if (pickCb) $("#pickCancel").click();
+  map.closePopup();
+  routeBackup = routeIds;
+  routeRec = true;
+  drawRoute();
+}
+function finishRoute() {
+  routeRec = false;
+  saveRoute();
+  if (routeStops().length) setPanelOpen(true); else { drawRoute(); toast("Nie wybrano żadnego przystanku"); }
+}
+function setPanelOpen(open) {
+  routeOpen = open;
+  ls.set("trasa-zwinieta", open ? "0" : "1");
+  drawRoute();
+}
+// Google przyjmuje start + 9 przystanków + cel (przeglądarki w telefonach: 3 przystanki) – dłuższa trasa = kilka linków
+function googleLinks(stops) {
+  const max = matchMedia("(pointer: coarse)").matches ? 5 : 11;
+  const pt = (s) => `${+s.Lat},${+s.Lng}`;
+  const out = [];
+  for (let i = 0; i < stops.length - 1; i += max - 1) {
+    const part = stops.slice(i, i + max);
+    const q = new URLSearchParams({ api: "1", origin: pt(part[0]), destination: pt(part[part.length - 1]), travelmode: "driving" });
+    if (part.length > 2) q.set("waypoints", part.slice(1, -1).map(pt).join("|"));
+    out.push({ url: "https://www.google.com/maps/dir/?" + q, from: i + 1, to: i + part.length });
+  }
+  return out;
+}
+
+function drawRoute() {
+  const stops = routeStops();
+  const pts = stops.map(stopLatLng);
+  routeLayer.clearLayers();
+  if (pts.length > 1) {
+    L.polyline(pts, { pane: "route", color: "#fff", weight: 7, opacity: 0.9, interactive: false }).addTo(routeLayer);
+    L.polyline(pts, { pane: "route", color: "#7c3aed", weight: 4, interactive: false }).addTo(routeLayer);
+  }
+  const nums = new Map();   // ta sama lokalizacja może być na trasie kilka razy
+  stops.forEach((s, i) => nums.set(s.ID, [...(nums.get(s.ID) || []), i + 1]));
+  for (const [id, n] of nums)
+    L.marker(stopLatLng(storeById(id)), { pane: "routeNum", interactive: false, keyboard: false,
+      icon: L.divIcon({ className: "route-num", html: `<span>${n.join(", ")}</span>`, iconSize: [0, 0] }) }).addTo(routeLayer);
+
+  const b = $("#btnRoute");
+  b.classList.toggle("on", routeRec);
+  b.setAttribute("aria-pressed", routeRec);
+  b.title = routeRec ? "Zakończ i pokaż listę" : stops.length ? "Dodaj kolejne przystanki" : "Zaznacz trasę";
+  b.setAttribute("aria-label", b.title);
+  $("#map").classList.toggle("routing", routeRec);
+  $("#routeHint").classList.toggle("hidden", !routeRec);
+  $("#routeCount").textContent = stops.length;
+
+  const p = $("#routePanel");
+  p.classList.toggle("hidden", routeRec || !stops.length);
+  p.classList.toggle("min", !routeOpen);
+  if (routeRec || !stops.length) return;
+  let m = 0;
+  for (let i = 1; i < pts.length; i++) m += pts[i - 1].distanceTo(pts[i]);
+  const km = (m / 1000).toLocaleString("pl", { maximumFractionDigits: m < 100000 ? 1 : 0 });
+  const links = googleLinks(stops);
+  const scroll = p.querySelector(".rp-list")?.scrollTop || 0;
+  p.innerHTML = `<div class="rp-head"><b>Trasa</b><span class="mut">przystanki: ${stops.length}</span>
+      <button type="button" class="rp-min" aria-expanded="${routeOpen}">${routeOpen ? "Zwiń ▴" : "Rozwiń ▾"}</button></div>
+    <div class="rp-body">
+      <ol class="rp-list">${stops.map((s, i) => `<li data-i="${i}"><span class="rp-n">${i + 1}</span>
+        <button type="button" class="rp-name" data-a="go"><b>${esc(nameOf(s))}</b><span>${esc(s[COL.address] || "")}</span></button>
+        <button type="button" class="st" data-a="up" title="Wyżej" aria-label="Wyżej" ${i ? "" : "disabled"}>▲</button>
+        <button type="button" class="st" data-a="down" title="Niżej" aria-label="Niżej" ${i < stops.length - 1 ? "" : "disabled"}>▼</button>
+        <button type="button" class="st x" data-a="del" title="Usuń z trasy" aria-label="Usuń z trasy">✕</button></li>`).join("")}</ol>
+      <div class="rp-foot">
+        <span class="mut">${stops.length > 1 ? `W linii prostej: ${km} km` : "Dodaj co najmniej dwa przystanki, aby otworzyć trasę w Google Maps."}</span>
+        ${links.map((l) => `<a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">Otwórz w Google Maps${links.length > 1 ? ` (${l.from}–${l.to})` : ""}</a>`).join("")}
+        <div class="rp-btns"><button type="button" class="btn sec sm" data-a="add">+ Dodaj przystanki</button>
+        <button type="button" class="btn sec sm" data-a="clear">Wyczyść trasę</button></div>
+      </div></div>`;
+  p.querySelector(".rp-list").scrollTop = scroll;
+}
+$("#btnRoute").onclick = () => (routeRec ? finishRoute() : startRoute());
+$("#routeUndo").onclick = (e) => { e.preventDefault(); setRoute(routeStops().slice(0, -1).map((s) => s.ID)); };
+$("#routeCancel").onclick = (e) => { e.preventDefault(); routeRec = false; setRoute(routeBackup); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && routeRec && !$("#dlg").open) $("#routeCancel").click(); });
+$("#routePanel").onclick = (e) => {
+  if (e.target.closest(".rp-min")) {
+    setPanelOpen(!routeOpen);
+    if (!routeOpen) { map.closePopup(); fitPoints(routeStops().map(stopLatLng), true, 110); }   // zwinięcie = pokaż całą trasę
+    return;
+  }
+  const a = e.target.closest("[data-a]")?.dataset.a;
+  if (!a) return;
+  const ids = routeStops().map((s) => s.ID);
+  const i = +(e.target.closest("li")?.dataset.i ?? -1);
+  const swap = (j) => { [ids[i], ids[j]] = [ids[j], ids[i]]; setRoute(ids); };
+  if (a === "go") {
+    if (markers[ids[i]]) focusOn(ids[i]);
+    else toast("Ta lokalizacja jest ukryta przez filtry listy.");
+  } else if (a === "up") swap(i - 1);
+  else if (a === "down") swap(i + 1);
+  else if (a === "del") { ids.splice(i, 1); setRoute(ids); }
+  else if (a === "add") startRoute();
+  else if (a === "clear" && confirm("Wyczyścić trasę?")) setRoute([]);
 };
 
 // ------------------------------------------------------------------ przyciski i zdarzenia

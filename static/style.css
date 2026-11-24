@@ -163,6 +163,33 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .home-view { width: 34px; height: 34px; display: grid; place-items: center; background: var(--panel); color: var(--tx); border: 1px solid var(--bd); border-radius: 8px; padding: 0; box-shadow: 0 1px 4px rgba(0,0,0,.2); cursor: pointer; }
 .home-view:hover { background: var(--bg); }
 
+/* Trasa */
+.route-btn { position: absolute; right: 52px; top: 10px; pointer-events: auto; }
+.route-btn.on, .route-btn.on:hover { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+#map.routing, #map.routing .leaflet-interactive, #map.routing .pin { cursor: crosshair; }
+.route-num span { position: absolute; left: -9px; top: 3px; transform: translateX(-100%); background: #7c3aed; color: #fff; border: 1.5px solid #fff; border-radius: 999px; min-width: 18px; padding: 0 4px; text-align: center; white-space: nowrap; font: 700 11px/16px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.route-panel { position: absolute; top: 54px; right: 10px; z-index: 1100; width: 330px; max-width: calc(100% - 20px); max-height: calc(100% - 84px); display: flex; flex-direction: column; background: var(--panel); color: var(--tx); border: 1px solid var(--bd); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+.route-panel.min { width: auto; }
+.route-panel.min .rp-body { display: none; }
+.rp-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; white-space: nowrap; font-size: 13px; }
+.rp-min { margin-left: auto; background: none; border: 0; padding: 2px 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.rp-body { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--bd); }
+.rp-list { list-style: none; margin: 0; padding: 4px 6px; overflow: auto; min-height: 0; }
+.rp-list li { display: flex; align-items: center; gap: 4px; padding: 4px; }
+.rp-n { flex: none; min-width: 20px; border-radius: 999px; background: #7c3aed; color: #fff; text-align: center; font: 700 11px/20px system-ui, sans-serif; }
+.rp-name { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 2px 4px; cursor: pointer; }
+.rp-name b, .rp-name span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.rp-name span { color: var(--mut); font-size: 11px; }
+.rp-list .st { flex: none; padding: 4px 7px; }
+.rp-list .st:disabled { opacity: .35; }
+.rp-foot { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid var(--bd); font-size: 12px; max-height: 60%; overflow: auto; }
+.rp-foot a.btn { text-align: center; text-decoration: none; }
+.rp-btns { display: flex; gap: 6px; }
+.rp-btns .btn { flex: 1; }
+@media (max-width: 760px) {
+  .route-panel:not(.min) { position: fixed; top: auto; bottom: 0; left: 0; right: 0; z-index: 1500; width: auto; max-width: none; max-height: 75vh; border-radius: 14px 14px 0 0; }
+}
+
 /* Styl mapy (przełącznik w lewym dolnym rogu) */
 #map.ms-muted .leaflet-tile-pane { filter: brightness(.8) saturate(.6); }
 #map.ms-dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
